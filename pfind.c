@@ -134,7 +134,7 @@ int directorySearch(char* dir)
             /*found file and its name is equal to the name of the file that we want*/
             if (S_ISREG(statbuf.st_mode) && strstr(dirent->d_name, searchValue))
             {
-                //printf("%s\n", dir);
+                /*printf("%s\n", dir);*/
                 pthread_mutex_lock(&valueMatchCntLock);
                 valueMatchCnt++;
                 pthread_mutex_unlock(&valueMatchCntLock);
@@ -153,7 +153,7 @@ void* directoryThreadSearch()
     if (threadsInitCnt == numOfThreads)
     {
         pthread_cond_broadcast(&initThreads);
-        printf("starting Together \n");
+        /*printf("starting Together \n");*/
     }
     else
     {
@@ -282,7 +282,7 @@ int main(int argc, char *argv[])
             perror("failed to create thread \n");
             return 1;
         }
-        printf("thread %d has started \n", i);
+        /*printf("thread %d has started \n", i);*/
     }
 
     /* */
@@ -295,7 +295,7 @@ int main(int argc, char *argv[])
             perror("failed to join thread \n");
             return 2;
         }
-        printf("thread %d has finished executing \n", i);
+        /*printf("thread %d has finished executing \n", i);*/
     }
     /* destroy the mutexes*/
     pthread_mutex_destroy(&mutex);
@@ -306,7 +306,12 @@ int main(int argc, char *argv[])
     pthread_cond_destroy(&initThreads);
     pthread_cond_destroy(&emptyQueCond);
 
-    printf("%d\n", valueMatchCnt);
+    printf("Done searching, found %d files\n", valueMatchCnt);
+    if (threadsWithErr > 0)
+    {
+        exit(Failure);
+    }
+
 
     /* close the dir*/
     closedir(dir);
