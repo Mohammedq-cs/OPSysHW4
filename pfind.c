@@ -95,6 +95,7 @@ int directorySearch(char* dir)
     
     char nodeDirPath[PATH_MAX];
     DIR *openedDir = opendir(dir);
+    DIR * tmp;
     struct dirent *dirent;
     struct stat statbuf;
     qNode *tmpDir;
@@ -107,22 +108,26 @@ int directorySearch(char* dir)
         if (strcmp(dirent->d_name, ".") == 0 || strcmp(dirent->d_name, "..") == 0){
             continue;
         }
+        
         sprintf(nodeDirPath, "%s/%s", dir, dirent->d_name);
         if (stat(nodeDirPath, &statbuf) != SUCCESS){
             fprintf(stderr, "stat failed on %s, error: %s\n",nodeDirPath, strerror(errno));
             return Failure;
         }
+        
         /*check if we found a directory */
         if (S_ISDIR(statbuf.st_mode))
         {
             /*check if we have premissions*/
-            if (opendir(nodeDirPath) != NULL)
+            tmp = opendir(nodeDirPath);
+            if (tmp != NULL)
             {
                 pthread_mutex_lock(&queueLock);
                 tmpDir = createQNode(nodeDirPath);
                 insertDir(tmpDir);
                 pthread_cond_broadcast(&emptyQueCond);
                 pthread_mutex_unlock(&queueLock);
+                closedir(tmp);
             }
             else
             {
@@ -132,9 +137,9 @@ int directorySearch(char* dir)
         else
         {
             /*found file and its name is equal to the name of the file that we want*/
-            if (S_ISREG(statbuf.st_mode) && strstr(dirent->d_name, searchValue))
+            if (strstr(dirent->d_name, searchValue))
             {
-                /*printf("%s\n", dir);*/
+                printf("%s\n", nodeDirPath);
                 pthread_mutex_lock(&valueMatchCntLock);
                 valueMatchCnt++;
                 pthread_mutex_unlock(&valueMatchCntLock);
@@ -203,11 +208,13 @@ void* directoryThreadSearch()
             pthread_exit(NULL);
         }
         pthread_mutex_unlock(&queueLock);
-        if (directorySearch(node->path_fileName) != SUCCESS)
+        int y = directorySearch(node->path_fileName);
+        if (y != SUCCESS)
         {
             pthread_mutex_lock(&threadsWithErrLock);
             threadsWithErr++;
             pthread_mutex_unlock(&threadsWithErrLock);
+            pthread_exit(NULL);
         }
         free(node);
     }
@@ -315,5 +322,5 @@ int main(int argc, char *argv[])
 
     /* close the dir*/
     closedir(dir);
-    return 1;
+    return SUCCESS;
 }
