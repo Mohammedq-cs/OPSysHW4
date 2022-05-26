@@ -82,7 +82,7 @@ qNode* createQNode(char* dirName)
     qNode * node = malloc(sizeof(qNode));
     if (node == NULL)
     {
-        exit(1);
+        exit(Failure);
     }
     strcpy(node->path_fileName, dirName);
     node->next = NULL;
@@ -155,7 +155,6 @@ int directoryThreadSearch()
     if (threadsInitCnt == numOfThreads)
     {
         cnd_broadcast(&initThreads);
-        /*printf("starting Together \n");*/
     }
     else
     {
@@ -219,14 +218,6 @@ int directoryThreadSearch()
     
     return SUCCESS;
 }
-    /*
-    for (int i = 0; i < 10000000; i++)
-    {
-        pthread_mutex_lock(&queueLock);
-        mails++;
-        pthread_mutex_unlock(&queueLock);
-    }
-    */
 
 
 
@@ -240,16 +231,11 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Invalid Number of arguemens");
         return 1;
     }
-    /*
-    searchValue = "a.out";
-    int j = directorySearch(argv[1]);
-    printf("%d\n", j);
-    printf("%d\n", valueMatchCnt);
-    */
     dir = opendir(argv[1]);
     if (dir == NULL)
     {
-        return 1;
+        perror("failed to open root dir \n");
+        return Failure;
     }
     
      /*getting the relevant inputs */
@@ -260,15 +246,6 @@ int main(int argc, char *argv[])
     qNode *headNode = createQNode(argv[1]);
     globalQueue.size = 0;
     insertDir(headNode);
-    /*
-    printf("%ld\n", globalQueue.size);
-    qNode *remNode = removeHeadDir();
-    printf("%s \n", remNode->path_fileName);
-    printf("%ld\n", globalQueue.size);
-    printf("%s \n", globalQueue.head->path_fileName);
-    printf("%s \n", globalQueue.tail->path_fileName);
-    */
-    
 
    /*init all mutex and conds*/
     mtx_init(&mutex, mtx_plain);
@@ -288,10 +265,8 @@ int main(int argc, char *argv[])
             perror("failed to create thread \n");
             return 1;
         }
-        /*printf("thread %d has started \n", i);*/
     }
 
-    /* */
     cnd_broadcast(&initThreads);
     /* join the threads */
     for (int i = 0; i < numOfThreads; i++)
@@ -299,9 +274,8 @@ int main(int argc, char *argv[])
         if(thrd_join(threadsArr[i], &status) != 0)
         {
             perror("failed to join thread \n");
-            return 2;
+            return Failure;
         }
-        /*printf("thread %d has finished executing \n", i);*/
     }
     /* destroy the mutexes*/
     mtx_destroy(&mutex);
@@ -319,7 +293,6 @@ int main(int argc, char *argv[])
     {
         exit(Failure);
     }
-
 
     /* close the dir*/
     return SUCCESS;
