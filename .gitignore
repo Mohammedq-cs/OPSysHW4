@@ -1,3 +1,4 @@
 *.out
 *.txt
 **/.vscode
+pfindVer2.c

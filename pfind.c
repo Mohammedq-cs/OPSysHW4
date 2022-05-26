@@ -7,7 +7,6 @@
 #include <linux/limits.h>
 #include <sys/stat.h>
 #include <stdatomic.h>
-#include <pthread.h>
 
 #define SUCCESS 0
 #define Failure 1
@@ -38,13 +37,13 @@ int threadWaitCnt = 0;
 int numOfThreads;
 
 char *searchValue;
-pthread_mutex_t mutex;
-pthread_mutex_t valueMatchCntLock;
-pthread_mutex_t threadsWithErrLock;
-pthread_mutex_t queueLock;
-pthread_mutex_t waitInit;
-pthread_cond_t initThreads;
-pthread_cond_t emptyQueCond;
+mtx_t mutex;
+mtx_t valueMatchCntLock;
+mtx_t threadsWithErrLock;
+mtx_t queueLock;
+mtx_t waitInit;
+cnd_t initThreads;
+cnd_t emptyQueCond;
 
 int insertDir(qNode *createDir){
     if(globalQueue.head == NULL && globalQueue.tail == NULL)
@@ -95,6 +94,7 @@ int directorySearch(char* dir)
     
     char nodeDirPath[PATH_MAX];
     DIR *openedDir = opendir(dir);
+    DIR *tmp;
     struct dirent *dirent;
     struct stat statbuf;
     qNode *tmpDir;
@@ -116,13 +116,15 @@ int directorySearch(char* dir)
         if (S_ISDIR(statbuf.st_mode))
         {
             /*check if we have premissions*/
-            if (opendir(nodeDirPath) != NULL)
+            tmp = opendir(nodeDirPath);
+            if (tmp != NULL)
             {
-                pthread_mutex_lock(&queueLock);
+                mtx_lock(&queueLock);
                 tmpDir = createQNode(nodeDirPath);
                 insertDir(tmpDir);
-                pthread_cond_broadcast(&emptyQueCond);
-                pthread_mutex_unlock(&queueLock);
+                cnd_broadcast(&emptyQueCond);
+                mtx_unlock(&queueLock);
+                closedir(tmp);
             }
             else
             {
@@ -134,10 +136,10 @@ int directorySearch(char* dir)
             /*found file and its name is equal to the name of the file that we want*/
             if (S_ISREG(statbuf.st_mode) && strstr(dirent->d_name, searchValue))
             {
-                /*printf("%s\n", dir);*/
-                pthread_mutex_lock(&valueMatchCntLock);
+                printf("%s\n", nodeDirPath);
+                mtx_lock(&valueMatchCntLock);
                 valueMatchCnt++;
-                pthread_mutex_unlock(&valueMatchCntLock);
+                mtx_unlock(&valueMatchCntLock);
             }
         }
     }    
@@ -145,26 +147,26 @@ int directorySearch(char* dir)
     return SUCCESS;
 }
 
-void* directoryThreadSearch()
+int directoryThreadSearch()
 {
-    pthread_mutex_lock(&waitInit);
+    mtx_lock(&waitInit);
     threadsInitCnt++;
     int flag = 0;
     if (threadsInitCnt == numOfThreads)
     {
-        pthread_cond_broadcast(&initThreads);
+        cnd_broadcast(&initThreads);
         /*printf("starting Together \n");*/
     }
     else
     {
-         pthread_cond_wait(&initThreads, &waitInit);
+         cnd_wait(&initThreads, &waitInit);
     }
-    pthread_mutex_unlock(&waitInit);
+    mtx_unlock(&waitInit);
 
     /* handling searching directories starts from here*/
     while (1)
     {
-        pthread_mutex_lock(&queueLock);
+        mtx_lock(&queueLock);
         /* queue is empty*/
         while (globalQueue.size == 0)
         {
@@ -174,45 +176,48 @@ void* directoryThreadSearch()
             }
             // Queue is empty and all threads are idle - means we are done
             if (sleepThreadCnt + threadsWithErr == numOfThreads){
-                pthread_cond_broadcast(&initThreads);
-                pthread_cond_broadcast(&emptyQueCond);
-                pthread_mutex_unlock(&queueLock);
-                pthread_exit(NULL);
+                cnd_broadcast(&initThreads);
+                cnd_broadcast(&emptyQueCond);
+                mtx_unlock(&queueLock);
+                thrd_exit(SUCCESS);
             }
             // Otherwise, we wait for work
-            pthread_cond_wait(&emptyQueCond, &queueLock);
+            cnd_wait(&emptyQueCond, &queueLock);
         }
         
         if (flag){
             flag = 0;
-            pthread_mutex_lock(&threadsWithErrLock);
+            mtx_lock(&threadsWithErrLock);
             sleepThreadCnt--;
-            pthread_mutex_unlock(&threadsWithErrLock);
+            mtx_unlock(&threadsWithErrLock);
         }
         qNode* node = removeHeadDir();
         if (node == NULL)
         {
             fprintf(stderr, "error occured, dequed from an empty queue\n");
-            pthread_mutex_lock(&threadsWithErrLock);
+            mtx_lock(&threadsWithErrLock);
             threadsWithErr++;
-            pthread_mutex_unlock(&threadsWithErrLock);
-            pthread_mutex_unlock(&queueLock);
-            pthread_mutex_unlock(&waitInit);
-            pthread_cond_broadcast(&initThreads);
-            pthread_cond_broadcast(&emptyQueCond);
-            pthread_exit(NULL);
+            mtx_unlock(&threadsWithErrLock);
+            mtx_unlock(&queueLock);
+            mtx_unlock(&waitInit);
+            cnd_broadcast(&initThreads);
+            cnd_broadcast(&emptyQueCond);
+            thrd_exit(Failure);
         }
-        pthread_mutex_unlock(&queueLock);
-        if (directorySearch(node->path_fileName) != SUCCESS)
+        mtx_unlock(&queueLock);
+        int y = directorySearch(node->path_fileName);
+        
+        if (y != SUCCESS)
         {
-            pthread_mutex_lock(&threadsWithErrLock);
+            mtx_lock(&threadsWithErrLock);
             threadsWithErr++;
-            pthread_mutex_unlock(&threadsWithErrLock);
+            mtx_unlock(&threadsWithErrLock);
+            thrd_exit(Failure);
         }
         free(node);
     }
     
-    return NULL;
+    return SUCCESS;
 }
     /*
     for (int i = 0; i < 10000000; i++)
@@ -228,6 +233,7 @@ void* directoryThreadSearch()
 int main(int argc, char *argv[])
 {
     DIR *dir;
+    int status;
     
     if (argc != 4)
     {
@@ -265,19 +271,19 @@ int main(int argc, char *argv[])
     
 
    /*init all mutex and conds*/
-    pthread_mutex_init(&mutex, NULL);
-    pthread_mutex_init(&valueMatchCntLock, NULL);
-    pthread_mutex_init(&threadsWithErrLock, NULL);
-    pthread_mutex_init(&waitInit, NULL);
-    pthread_mutex_init(&queueLock, NULL);
-    pthread_cond_init(&initThreads,NULL);
-    pthread_cond_init(&emptyQueCond,NULL);
+    mtx_init(&mutex, mtx_plain);
+    mtx_init(&valueMatchCntLock, mtx_plain);
+    mtx_init(&threadsWithErrLock, mtx_plain);
+    mtx_init(&waitInit, mtx_plain);
+    mtx_init(&queueLock, mtx_plain);
+    cnd_init(&initThreads);
+    cnd_init(&emptyQueCond);
 
     /* intializing all the threads*/
-    pthread_t threadsArr[numOfThreads];
+    thrd_t threadsArr[numOfThreads];
     for (int i = 0; i < numOfThreads; i++)
     {
-        if(pthread_create(&threadsArr[i], NULL, directoryThreadSearch, NULL))
+        if(thrd_create(&threadsArr[i], directoryThreadSearch, NULL))
         {
             perror("failed to create thread \n");
             return 1;
@@ -286,11 +292,11 @@ int main(int argc, char *argv[])
     }
 
     /* */
-    pthread_cond_broadcast(&initThreads);
+    cnd_broadcast(&initThreads);
     /* join the threads */
     for (int i = 0; i < numOfThreads; i++)
     {
-        if(pthread_join(threadsArr[i], NULL) != 0)
+        if(thrd_join(threadsArr[i], &status) != 0)
         {
             perror("failed to join thread \n");
             return 2;
@@ -298,15 +304,17 @@ int main(int argc, char *argv[])
         /*printf("thread %d has finished executing \n", i);*/
     }
     /* destroy the mutexes*/
-    pthread_mutex_destroy(&mutex);
-    pthread_mutex_destroy(&queueLock);
-    pthread_mutex_destroy(&waitInit);
-    pthread_mutex_destroy(&valueMatchCntLock);
-    pthread_mutex_destroy(&threadsWithErrLock);
-    pthread_cond_destroy(&initThreads);
-    pthread_cond_destroy(&emptyQueCond);
+    mtx_destroy(&mutex);
+    mtx_destroy(&queueLock);
+    mtx_destroy(&waitInit);
+    mtx_destroy(&valueMatchCntLock);
+    mtx_destroy(&threadsWithErrLock);
+    cnd_destroy(&initThreads);
+    cnd_destroy(&emptyQueCond);
 
     printf("Done searching, found %d files\n", valueMatchCnt);
+    closedir(dir);
+
     if (threadsWithErr > 0)
     {
         exit(Failure);
@@ -314,6 +322,5 @@ int main(int argc, char *argv[])
 
 
     /* close the dir*/
-    closedir(dir);
-    return 1;
+    return SUCCESS;
 }
